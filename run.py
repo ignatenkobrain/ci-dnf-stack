@@ -118,10 +118,12 @@ def main():
 
     if args.action == "build-srpm":
         from ci_dnf_stack import utils
-        print(utils.build_srpm(args.upstream, args.spec))
+        print(utils.build_srpm(ROOT, args.upstream, args.spec))
     elif args.action == "build-rpm":
         if args.builder == "rpmbuild":
-            out = subprocess.check_output(["rpmbuild", "--rebuild", args.srpm])
+            out_dir = tempfile.mkdtemp(prefix="rpm", dir=ROOT)
+            out = subprocess.check_output(["rpmbuild", "--rebuild", args.srpm,
+                                           "--define", "_rpmdir {}".format(out_dir)])
             rpms = []
             _wrt = False
             regex = re.compile(r"^Wrote: (.+\.rpm)$")
