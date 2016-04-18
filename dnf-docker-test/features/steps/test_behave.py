@@ -6,6 +6,7 @@ import subprocess
 import glob
 import re
 import shutil
+import tempfile
 from time import sleep
 
 DNF_FLAGS = ['-y', '--disablerepo=*', '--nogpgcheck']
@@ -112,16 +113,18 @@ def given_repo_condition(context, repo):
     """ :type context: behave.runner.Context """
     assert repo
     context.repo = repo
-    assert os.path.exists('/var/www/html/repo/' + repo)
-    for root, dirs, files in os.walk('/repo'):
-        for f in files:
-            os.unlink(os.path.join(root, f))
-        for d in dirs:
-            shutil.rmtree(os.path.join(root, d))
-    subprocess.check_call(['cp -rs /var/www/html/repo/' + repo + '/* /repo/'], shell=True)
-    with open('/etc/yum.repos.d/' + repo + '.repo', 'w') as f:
-        f.write('[' + repo + ']\nname=' + repo + '\nbaseurl=http://127.0.0.1/repo/' + repo + '\nenabled=1\ngpgcheck=0')
-
+    _, repofn = tempfile.mkstemp(suffix=".repo",
+                                 prefix="_dnf_functional",
+                                 dir="/etc/yum.repos.d")
+    port = context.http_server.server_port
+    content = """
+[{repo}]
+name={repo}
+baseurl=http://127.0.0.1:{port}/{repo}
+enabled=1
+gpgcheck=0""".format(repo=repo, port=port)
+    with open(repofn, "w") as f:
+        f.write(content)
 
 @when('I "{action}" a package "{pkgs}" with "{manager}"')
 def when_action_package(context, action, pkgs, manager):
