@@ -1,5 +1,3 @@
-from __future__ import print_function, unicode_literals
-
 from datetime import datetime
 import os
 import re
@@ -164,7 +162,7 @@ def build_srpm(repository, rpmspec, commit_sha=None):
     try:
         with tarfile.open(os.path.join(tmpdir, archive_name), archive_mode) as archive:
             repo.write_archive(repo[oid], archive, prefix=archive_prefix)
-        with open("{}.spec".format(package), "w") as specfile:
+        with open("{}.spec".format(os.path.join(tmpdir, package)), "w") as specfile:
             specfile.write(spec)
             specfile.flush()
         out = subprocess.check_output(["rpmbuild", "-bs", specfile.name,
