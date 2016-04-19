@@ -4,6 +4,8 @@
 from __future__ import print_function, unicode_literals
 
 import argparse
+import json
+import io
 import logging
 import os
 import re
@@ -78,6 +80,47 @@ def _run_tests(log_dir, dnf_cmd="dnf"):
                      "-D", "dnf_command_version={}".format(dnf_cmd),
                      "--junit", "--junit-directory", log_dir])
 
+def _run_tests_in_docker(image, log_dir, dnf_cmd):
+    import docker
+    cli = docker.Client()
+
+    # Build container
+    packages = ["/usr/bin/behave-2", "/usr/bin/{}".format(dnf_cmd)]
+    dockerfile = """FROM {image}
+ENV LANG C
+RUN dnf -y --setopt=deltarpm=false update
+RUN dnf -y --setopt=deltarpm=false install {packages}
+RUN dnf clean all
+COPY . /ci-dnf-stack
+CMD ["/bin/bash"]
+""".format(image=image, packages=" ".join(packages))
+    dfile = io.BytesIO(dockerfile.encode("utf-8"))
+    built = [x for x in cli.build(path=ROOT, fileobj=dfile, nocache=True, rm=True)]
+    tmp = json.loads(built[-1].decode("utf-8"))
+    c_id = None
+    if "stream" in tmp:
+        match = re.match(r"^Successfully built (.+)\n$", tmp["stream"])
+        if match:
+            c_id = match.group(1)
+            LOGGER.debug("Container ID: {}".format(c_id))
+    if not c_id:
+        raise Exception("Failed to build container")
+
+    # Run tests in container
+    container = cli.create_container(
+        image=c_id,
+        command="python run.py run-tests local -o /test-logs {}".format(dnf_cmd),
+        working_dir="/test-logs",
+        volumes=["/test-logs"],
+        host_config=cli.create_host_config(binds={
+            log_dir: {
+                "bind": "/test-logs",
+                "mode": "rw"
+            }
+        })
+    )
+    cli.start(container["Id"])
+
 def main():
     parser = argparse.ArgumentParser(description="Test the DNF stack.")
     subparsers = parser.add_subparsers(help="Action to do", dest="action")
@@ -100,6 +143,7 @@ def main():
     test_type_parser = test_parser.add_subparsers(help="Where to run tests", dest="test_type")
     test_parser.add_argument("dnf_cmd", help="DNF command to use")
     test_parser.add_argument("rpms", help="RPM(s) to install", nargs="*", metavar="RPM")
+    test_parser.add_argument("-o", "--output", help="Output for JUnit test results")
     test_type_parser.add_parser("local", help="Run tests locally")
     docker_parser = test_type_parser.add_parser("docker", help="Run tests in docker")
     docker_parser.add_argument("image", help="Base image")
@@ -140,11 +184,14 @@ def main():
             rpms = _build_in_copr(args.srpm, args.project_owner, args.project_name, args.chroot)
         print(" ".join(rpms))
     elif args.action == "run-tests":
-        log_dir = tempfile.mkdtemp(prefix="test-results", dir=ROOT)
+        if not args.output:
+            log_dir = tempfile.mkdtemp(prefix="test-results", dir=ROOT)
+        else:
+            log_dir = args.output
         if args.test_type == "local":
             _run_tests(log_dir, args.dnf_cmd)
         elif args.test_type == "docker":
-            raise NotImplementedError
+            _run_tests_in_docker(args.image, log_dir, args.dnf_cmd)
         print(log_dir)
 
 if __name__ == "__main__":
